@@ -2900,6 +2900,9 @@ fn render_wechat_workspace_status(
         if let Some(provider) = status.provider_id.as_ref() {
             body.push_str(&format!("\n提供方：`{provider}`"));
         }
+        if let Some(origin) = status.origin.as_deref() {
+            body.push_str(&format!("\n来源：`{origin}`"));
+        }
         if let Some(model) = status.model.as_deref() {
             body.push_str(&format!("\n模型：`{model}`"));
             match (status.model_detail.as_deref(), status.reasoning.as_deref()) {

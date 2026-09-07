@@ -253,6 +253,8 @@ pub struct AgentStatus {
     pub context: Option<AgentContextUsage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compactions: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<SmolStr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

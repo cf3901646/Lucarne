@@ -656,6 +656,9 @@ fn render_status_snapshot(snapshot: &StatusSnapshot, body: &mut String) {
     if let Some(provider) = snapshot.provider_id.as_ref() {
         body.push_str(&format!("Provider: `{provider}`\n"));
     }
+    if let Some(origin) = snapshot.origin.as_ref() {
+        body.push_str(&format!("Origin: `{origin}`\n"));
+    }
     if let Some(state) = snapshot.live_instance_state {
         body.push_str(&format!("Live: `{}`\n", live_state_label(state)));
     }

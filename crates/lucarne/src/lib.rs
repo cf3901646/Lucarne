@@ -60,6 +60,8 @@ pub use agent_runtime::{
     RuntimeBusEvent, RuntimeBusFilter, RuntimeBusOutput, RuntimeBusStream, RuntimeCommand,
     SessionClosedEvent, SessionId, SessionOpenedEvent, SessionRef, ToolCallEvent, ToolResultEvent,
     UsageEvent,
+    RemoteEnvironmentConfig, RemoteEnvironmentError, RemoteEnvironmentRegistry, RemoteFileSafety,
+    RemoteTransport, SessionOrigin,
 };
 pub use core_service::{
     default_lucarned_home_dir, default_state_db_path, CoreOptions, LucarneCore,

@@ -79,6 +79,9 @@ pub fn build_status_snapshot(
             .and_then(|status| status.compactions),
         usage_snapshot: provider_session.map(|session| session.usage_snapshot.clone()),
         context_snapshot: provider_session.map(|session| session.context_snapshot.clone()),
+        origin: provider_status
+            .as_ref()
+            .and_then(|status| status.origin.clone()),
         provider_status,
         channel_binding_state: channel_binding.map(|binding| {
             if let Some(topic_id) = binding.topic_id.as_ref() {

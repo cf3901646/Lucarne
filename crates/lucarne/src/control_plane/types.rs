@@ -606,6 +606,7 @@ pub struct StatusSnapshot {
     pub provider_status: Option<AgentStatus>,
     pub channel_binding_state: Option<SmolStr>,
     pub last_reconcile_outcome: Option<ReconcileOutcome>,
+    pub origin: Option<SmolStr>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

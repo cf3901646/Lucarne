@@ -4,6 +4,7 @@ pub mod events;
 pub mod project;
 pub mod provider;
 mod provider_args;
+pub mod remote;
 pub mod runtime;
 pub mod session;
 pub mod types;
@@ -20,6 +21,10 @@ pub use events::{
     ToolCallEvent, ToolResultEvent, UsageEvent,
 };
 pub use provider::{AgentProvider, ProtocolProvider};
+pub use remote::{
+    RemoteEnvironmentConfig, RemoteEnvironmentError, RemoteEnvironmentRegistry, RemoteFileSafety,
+    RemoteTransport, SessionOrigin,
+};
 pub use runtime::{AgentDescriptor, AgentRuntime, RuntimeBus};
 pub use session::{AgentSession, AgentSessionFacade, AgentSessionOptions};
 pub use types::{
