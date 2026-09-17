@@ -22,9 +22,20 @@ fn remote_environment_config_serde_and_origin_label() {
     assert_eq!(config.env.get("CUDA_VISIBLE_DEVICES").unwrap(), "0,1");
     assert!(config.enabled);
 
+    // Auth token is redacted in Debug output
+    let debug_output = format!("{config:?}");
+    assert!(debug_output.contains("<redacted>"));
+    assert!(!debug_output.contains("secret-token-123"));
+
+    // Auth token is skipped during serialization
     let json = to_string(&config).expect("serialization failed");
+    assert!(!json.contains("secret-token-123"));
+    assert!(!json.contains("auth_token"));
+
     let deserialized: RemoteEnvironmentConfig = from_str(&json).expect("deserialization failed");
-    assert_eq!(deserialized, config);
+    assert_eq!(deserialized.name, config.name);
+    assert_eq!(deserialized.endpoint, config.endpoint);
+    assert_eq!(deserialized.auth_token, None);
 }
 
 #[test]
@@ -89,13 +100,25 @@ fn remote_file_safety_traversal_prevention() {
         Err(RemoteEnvironmentError::SafeFileTransferRejected { .. })
     ));
 
-    // Absolute paths
+    // Absolute and dangerous path prefixes across platforms
     assert!(matches!(
         RemoteFileSafety::validate_relative_path("/etc/shadow"),
         Err(RemoteEnvironmentError::SafeFileTransferRejected { .. })
     ));
     assert!(matches!(
         RemoteFileSafety::validate_relative_path("C:\\Windows\\System32"),
+        Err(RemoteEnvironmentError::SafeFileTransferRejected { .. })
+    ));
+    assert!(matches!(
+        RemoteFileSafety::validate_relative_path("C:/Windows/System32"),
+        Err(RemoteEnvironmentError::SafeFileTransferRejected { .. })
+    ));
+    assert!(matches!(
+        RemoteFileSafety::validate_relative_path("~/.ssh/id_rsa"),
+        Err(RemoteEnvironmentError::SafeFileTransferRejected { .. })
+    ));
+    assert!(matches!(
+        RemoteFileSafety::validate_relative_path("\\\\server\\share\\file"),
         Err(RemoteEnvironmentError::SafeFileTransferRejected { .. })
     ));
 }
@@ -115,11 +138,11 @@ fn session_origin_labels_and_serde() {
     let local = SessionOrigin::Local;
     let remote = SessionOrigin::Remote(SmolStr::new("gpu-server"));
 
-    assert_eq!(local.as_str(), "local");
-    assert_eq!(local.to_display_label().as_str(), "local");
+    assert_eq!(local.origin_label().as_str(), "local");
+    assert_eq!(local.to_string(), "local");
 
-    assert_eq!(remote.as_str(), "gpu-server");
-    assert_eq!(remote.to_display_label().as_str(), "remote:gpu-server");
+    assert_eq!(remote.origin_label().as_str(), "remote:gpu-server");
+    assert_eq!(remote.to_string(), "remote:gpu-server");
 
     let json = to_string(&remote).unwrap();
     let deserialized: SessionOrigin = from_str(&json).unwrap();

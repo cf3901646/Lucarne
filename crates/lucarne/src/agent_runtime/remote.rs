@@ -1,4 +1,4 @@
-﻿//! Remote Agent Environment Configuration & Orchestration
+//! Remote Agent Environment Configuration & Orchestration
 //!
 //! Implements support for managing agents running outside the local machine
 //! while keeping channel UX (Telegram/WeChat) consistent.
@@ -8,28 +8,22 @@
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::HashMap;
-use std::path::{Component, Path};
 
 /// Supported transport mechanisms to connect to a remote agent runtime.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RemoteTransport {
     /// Secure SSH execution channel
     Ssh,
     /// Secure WebSocket / HTTP agent gateway
+    #[default]
     Gateway,
     /// Unix domain or TCP bridge
     Bridge,
 }
 
-impl Default for RemoteTransport {
-    fn default() -> Self {
-        Self::Gateway
-    }
-}
-
 /// Configuration for a remote execution environment.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteEnvironmentConfig {
     /// Unique identifier for this remote environment (e.g. "cloud-gpu", "staging-cluster").
     pub name: SmolStr,
@@ -44,8 +38,8 @@ pub struct RemoteEnvironmentConfig {
     /// Environment variables specific to the remote host.
     #[serde(default)]
     pub env: HashMap<String, String>,
-    /// Authorization token or credential reference (kept safe, not logged in plain text).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Authorization token or credential reference (kept safe, not serialized or logged in plain text).
+    #[serde(skip)]
     pub auth_token: Option<SmolStr>,
     /// Connection and execution timeout in seconds.
     #[serde(default = "default_timeout_secs")]
@@ -53,6 +47,24 @@ pub struct RemoteEnvironmentConfig {
     /// Whether this remote environment is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+impl std::fmt::Debug for RemoteEnvironmentConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteEnvironmentConfig")
+            .field("name", &self.name)
+            .field("endpoint", &self.endpoint)
+            .field("transport", &self.transport)
+            .field("remote_cwd", &self.remote_cwd)
+            .field("env", &self.env)
+            .field(
+                "auth_token",
+                &self.auth_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("timeout_secs", &self.timeout_secs)
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 fn default_timeout_secs() -> u64 {
@@ -94,29 +106,23 @@ impl RemoteEnvironmentConfig {
 
     /// Origin label formatted for status and history projection.
     pub fn origin_label(&self) -> SmolStr {
-        format!("remote:{}", self.name).into()
+        SessionOrigin::Remote(self.name.clone()).origin_label()
     }
 }
 
 /// Structured origin label indicating where a session or process originated.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionOrigin {
     /// Running locally on the daemon host.
+    #[default]
     Local,
     /// Running in a configured remote environment.
     Remote(SmolStr),
 }
 
 impl SessionOrigin {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Local => "local",
-            Self::Remote(name) => name.as_str(),
-        }
-    }
-
-    pub fn to_display_label(&self) -> SmolStr {
+    pub fn origin_label(&self) -> SmolStr {
         match self {
             Self::Local => "local".into(),
             Self::Remote(name) => format!("remote:{name}").into(),
@@ -124,9 +130,9 @@ impl SessionOrigin {
     }
 }
 
-impl Default for SessionOrigin {
-    fn default() -> Self {
-        Self::Local
+impl std::fmt::Display for SessionOrigin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.origin_label())
     }
 }
 
@@ -181,7 +187,7 @@ impl RemoteEnvironmentRegistry {
                     })?;
                     Ok(env.origin_label())
                 }
-                None => Ok("local".into()),
+                None => Ok(SessionOrigin::Local.origin_label()),
             },
         }
     }
@@ -192,26 +198,50 @@ pub struct RemoteFileSafety;
 
 impl RemoteFileSafety {
     /// Validate that a remote file path is safe and does not attempt directory traversal (`..`).
+    ///
+    /// Checks are host-independent so absolute drive prefixes (e.g. `C:\`), UNC paths,
+    /// leading root slashes (`/`), and home directory paths (`~`) are rejected uniformly
+    /// across Windows, Linux, and macOS.
     pub fn validate_relative_path(path: &str) -> Result<String, RemoteEnvironmentError> {
-        let p = Path::new(path);
-        for comp in p.components() {
-            match comp {
-                Component::ParentDir => {
-                    return Err(RemoteEnvironmentError::SafeFileTransferRejected {
-                        file: path.into(),
-                        reason: "Path contains directory traversal component ('..')".into(),
-                    });
-                }
-                Component::RootDir | Component::Prefix(_) => {
-                    return Err(RemoteEnvironmentError::SafeFileTransferRejected {
-                        file: path.into(),
-                        reason: "Absolute paths outside remote workspace root are not permitted".into(),
-                    });
-                }
-                _ => {}
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return Err(RemoteEnvironmentError::SafeFileTransferRejected {
+                file: path.into(),
+                reason: "Path cannot be empty".into(),
+            });
+        }
+
+        // Check for Windows drive letter prefix (e.g. "C:" or "c:")
+        let bytes = trimmed.as_bytes();
+        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            return Err(RemoteEnvironmentError::SafeFileTransferRejected {
+                file: path.into(),
+                reason: "Absolute paths with drive prefix are not permitted".into(),
+            });
+        }
+
+        // Check for leading root slash, backslash (UNC), or home directory tilde
+        if trimmed.starts_with('/') || trimmed.starts_with('\\') || trimmed.starts_with('~') {
+            return Err(RemoteEnvironmentError::SafeFileTransferRejected {
+                file: path.into(),
+                reason: "Absolute paths or home directory paths outside remote workspace root are not permitted".into(),
+            });
+        }
+
+        // Normalize all backslashes to forward slashes
+        let normalized = trimmed.replace('\\', "/");
+
+        // Inspect each path component for directory traversal
+        for comp in normalized.split('/') {
+            if comp == ".." {
+                return Err(RemoteEnvironmentError::SafeFileTransferRejected {
+                    file: path.into(),
+                    reason: "Path contains directory traversal component ('..')".into(),
+                });
             }
         }
-        Ok(path.replace('\\', "/"))
+
+        Ok(normalized)
     }
 
     /// Validate file size limit for remote file transfer.
@@ -257,7 +287,8 @@ mod tests {
     fn test_remote_environment_config_defaults() {
         let config = RemoteEnvironmentConfig::new("staging-gpu", "10.0.0.12:8080")
             .with_transport(RemoteTransport::Gateway)
-            .with_cwd("/workspace/agent");
+            .with_cwd("/workspace/agent")
+            .with_auth_token("secret-token");
 
         assert_eq!(config.name.as_str(), "staging-gpu");
         assert_eq!(config.endpoint.as_str(), "10.0.0.12:8080");
@@ -265,6 +296,10 @@ mod tests {
         assert_eq!(config.remote_cwd.as_deref(), Some("/workspace/agent"));
         assert_eq!(config.origin_label().as_str(), "remote:staging-gpu");
         assert!(config.enabled);
+
+        let debug_str = format!("{config:?}");
+        assert!(debug_str.contains("<redacted>"));
+        assert!(!debug_str.contains("secret-token"));
     }
 
     #[test]
@@ -299,11 +334,19 @@ mod tests {
     }
 
     #[test]
-    fn test_remote_file_safety_rejects_traversal() {
+    fn test_remote_file_safety_host_independent() {
         assert!(RemoteFileSafety::validate_relative_path("safe/path/file.py").is_ok());
+        assert_eq!(
+            RemoteFileSafety::validate_relative_path("sub\\dir\\file.txt").unwrap(),
+            "sub/dir/file.txt"
+        );
         assert!(RemoteFileSafety::validate_relative_path("../secret/config.json").is_err());
         assert!(RemoteFileSafety::validate_relative_path("safe/../../escape.txt").is_err());
         assert!(RemoteFileSafety::validate_relative_path("/etc/passwd").is_err());
+        assert!(RemoteFileSafety::validate_relative_path("C:\\Windows\\System32").is_err());
+        assert!(RemoteFileSafety::validate_relative_path("C:/Windows/System32").is_err());
+        assert!(RemoteFileSafety::validate_relative_path("~/.ssh/id_rsa").is_err());
+        assert!(RemoteFileSafety::validate_relative_path("\\\\server\\share\\data").is_err());
     }
 
     #[test]
@@ -314,9 +357,14 @@ mod tests {
 
     #[test]
     fn test_session_origin_display() {
-        assert_eq!(SessionOrigin::Local.to_display_label().as_str(), "local");
+        assert_eq!(SessionOrigin::Local.origin_label().as_str(), "local");
+        assert_eq!(SessionOrigin::Local.to_string(), "local");
         assert_eq!(
-            SessionOrigin::Remote("cloud".into()).to_display_label().as_str(),
+            SessionOrigin::Remote("cloud".into()).origin_label().as_str(),
+            "remote:cloud"
+        );
+        assert_eq!(
+            SessionOrigin::Remote("cloud".into()).to_string(),
             "remote:cloud"
         );
     }
